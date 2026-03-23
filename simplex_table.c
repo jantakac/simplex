@@ -2,13 +2,12 @@
 
 typedef struct SimplexTable
 {
-    size_t rows;
-    size_t cols;
-    size_t *basic_vars_idxs;
-    float *flat_table;
+    size_t rows_st;
+    size_t cols_st;
+    size_t *basic_vars;
+    float *st_vars;
+    float *costs;
 } SimplexTable;
-
-static bool simplex_table_is_var_in_basis(SimplexTable *self, size_t var_idx);
 
 SimplexTable *simplex_table_create(void)
 {
@@ -20,28 +19,29 @@ SimplexTable *simplex_table_create(void)
 
     setlocale(LC_NUMERIC, "sk_SK.utf8");
 
-    fscanf(fhandler, "%zd %zd", &(self->rows), &(self->cols));
-    ++self->rows;
-    self->cols += 2;
-    self->flat_table = malloc(sizeof(float) * self->rows * self->cols);
-    self->basic_vars_idxs = malloc(sizeof(size_t) * (self->rows - 1));
+    fscanf(fhandler, "%zd %zd %*s ", &(self->rows_st), &(self->cols_st));
 
-    // loading the flat simplex table
-    self->flat_table[0] = 1;
-    for (size_t i = 1; i < self->rows * self->cols; ++i)
+    for (size_t i = 0; i < self->rows_st; ++i)
+        fscanf(fhandler, "%*c ");
+
+    ++self->cols_st;
+    self->costs = malloc(sizeof(float) * (self->cols_st - 1));
+    self->st_vars = malloc(sizeof(float) * self->rows_st * self->cols_st);
+    self->basic_vars = malloc(sizeof(size_t) * self->rows_st);
+
+    for (size_t i = 0; i < self->cols_st - 1; ++i)
+        fscanf(fhandler, "%f", &(self->costs[i]));
+
+    // loading the st vars flat table
+    for (size_t i = 0; i < self->rows_st * self->cols_st; ++i)
+        fscanf(fhandler, "%f", &(self->st_vars[i]));
+
+    // loading the basic vars
+    for (size_t i = 0; i < self->rows_st; ++i)
     {
-        if (i % self->cols == 0)
-            self->flat_table[i] = 0;
-        else
-        {
-            fscanf(fhandler, "%f", &(self->flat_table[i]));
-            if (i < self->cols)
-                self->flat_table[i] = -self->flat_table[i];
-        }
+        fscanf(fhandler, "%zd", &(self->basic_vars[i]));
+        --self->basic_vars[i];
     }
-
-    for (size_t i = 0; i < self->rows - 1; ++i)
-        fscanf(fhandler, "%zd", &(self->basic_vars_idxs[i]));
 
     fclose(fhandler);
     return self;
@@ -52,59 +52,65 @@ void simplex_table_solve(SimplexTable *self)
     while (true)
     {
         size_t pivot_col;
-        float smallest_obj_func_num = FLT_MAX;
-
+        float smallest_reduced_cost = FLT_MAX;
+        float reduced_cost;
+        bool found_piv = false;
         // calculating the column of the pivot
-        for (size_t i = 0; i < self->cols - 1; ++i)
+        for (size_t i = 0; i < self->cols_st - 1; ++i)
         {
-            if (self->flat_table[i] < 0.0f && self->flat_table[i] < smallest_obj_func_num)
+            reduced_cost = 0.0f;
+            for (size_t j = 0; j < self->rows_st; ++j)
+                reduced_cost += self->costs[self->basic_vars[j]] * simplex_table_elem_val(self, j, i);
+            reduced_cost = self->costs[i] - reduced_cost;
+            if (reduced_cost < 0 && reduced_cost < smallest_reduced_cost)
             {
-                smallest_obj_func_num = self->flat_table[i];
+                smallest_reduced_cost = reduced_cost;
                 pivot_col = i;
+                found_piv = true;
             }
         }
 
         // if pivot_col was not found, end
-        if (smallest_obj_func_num == FLT_MAX)
-        {
+        if (!found_piv)
             return;
-        }
 
         size_t pivot_row;
-        float best_pivot_row_div = FLT_MAX;
+        float smallest_ratio = FLT_MAX;
+        found_piv = false;
         // calculating the row of the pivot
-        for (size_t i = 1; i < self->rows; ++i)
+        for (size_t i = 0; i < self->rows_st; ++i)
         {
             if (simplex_table_elem_val(self, i, pivot_col) <= 0.0f)
                 continue;
-            float curr_div = simplex_table_elem_val(self, i, self->cols - 1) / simplex_table_elem_val(self, i, pivot_col);
-            if (curr_div > 0 && curr_div < best_pivot_row_div)
+            float curr_div = simplex_table_elem_val(self, i, self->cols_st - 1) / simplex_table_elem_val(self, i, pivot_col);
+            if (curr_div > 0 && curr_div < smallest_ratio)
             {
-                best_pivot_row_div = curr_div;
+                smallest_ratio = curr_div;
                 pivot_row = i;
+                found_piv = true;
             }
         }
 
         // if pivot_row was not found, end
-        if (best_pivot_row_div == FLT_MAX)
+        if (!found_piv)
             return;
 
         simplex_table_print(self);
         // change basic var
-        self->basic_vars_idxs[pivot_row - 1] = pivot_col;
+        self->basic_vars[pivot_row] = pivot_col;
 
         float pivot_val = simplex_table_elem_val(self, pivot_row, pivot_col);
-        for (size_t i = 0; i < self->cols; ++i)
+        for (size_t i = 0; i < self->cols_st; ++i)
         {
             *simplex_table_elem_ptr(self, pivot_row, i) /= pivot_val;
         }
 
-        for (size_t i = 0; i < self->rows; ++i)
+        for (size_t i = 0; i < self->rows_st; ++i)
         {
             if (i == pivot_row)
                 continue;
             float mul_by = -simplex_table_elem_val(self, i, pivot_col);
-            for (size_t j = 0; j < self->cols; ++j)
+            for (size_t j = 0; j < self->cols_st; ++j)
             {
                 *simplex_table_elem_ptr(self, i, j) += simplex_table_elem_val(self, pivot_row, j) * mul_by;
             }
@@ -115,33 +121,42 @@ void simplex_table_solve(SimplexTable *self)
 
 float simplex_table_elem_val(SimplexTable *self, size_t row, size_t column)
 {
-    return self->flat_table[row * self->cols + column];
+    return self->st_vars[row * self->cols_st + column];
 }
 
 float *simplex_table_elem_ptr(SimplexTable *self, size_t row, size_t column)
 {
-    return &(self->flat_table[row * self->cols + column]);
+    return &(self->st_vars[row * self->cols_st + column]);
 }
 
 size_t simplex_table_size(SimplexTable *self)
 {
-    return self->rows * self->cols;
+    return self->rows_st * self->cols_st;
+}
+
+float simplex_table_obj_func(SimplexTable *self)
+{
+    float obj_func = 0.0f;
+    for (size_t i = 0; i < self->rows_st; ++i)
+        obj_func += simplex_table_elem_val(self, i, self->cols_st - 1) * self->costs[self->basic_vars[i]];
+
+    return obj_func;
 }
 
 void simplex_table_print(SimplexTable *self)
 {
-    for (size_t i = 0; i < self->rows; ++i)
+    for (size_t i = 0; i < self->rows_st; ++i)
     {
-        for (size_t j = 0; j < self->cols; ++j)
+        for (size_t j = 0; j < self->cols_st; ++j)
         {
             printf("%7.2f ", simplex_table_elem_val(self, i, j));
         }
         puts("");
     }
     puts("Basic variables:");
-    for (size_t i = 0; i < self->rows - 1; ++i)
+    for (size_t i = 0; i < self->rows_st; ++i)
     {
-        printf("%zd ", self->basic_vars_idxs[i]);
+        printf("%zd ", self->basic_vars[i]);
     }
     puts("");
     puts("---------------------");
@@ -149,29 +164,21 @@ void simplex_table_print(SimplexTable *self)
 
 void simplex_table_print_solution(SimplexTable *self)
 {
-    float *solution = calloc(0.0f, sizeof(float) * (self->cols - 1));
-    for (size_t i = 0; i < self->rows - 1; ++i)
-        solution[self->basic_vars_idxs[i] - 1] = self->flat_table[self->basic_vars_idxs[i]];
+    float *solution = calloc((self->cols_st - 1), sizeof(float));
+    for (size_t i = 0; i < self->rows_st; ++i)
+        solution[self->basic_vars[i]] = simplex_table_elem_val(self, i, self->cols_st - 1);
 
     printf("Optimal solution: <");
-    for (size_t i = 0; i < self->cols - 1; ++i)
-        printf("%f, ", solution[i]);
-    printf(">, f(x)=%.2f", self->flat_table[self->cols - 1]);
+    for (size_t i = 0; i < self->cols_st - 1; ++i)
+        printf("%.2f, ", solution[i]);
+    printf(">, f(x)=%.2f", simplex_table_obj_func(self));
 
     free(solution);
 }
 
 void simplex_table_destroy(SimplexTable *self)
 {
-    free(self->basic_vars_idxs);
-    free(self->flat_table);
+    free(self->basic_vars);
+    free(self->st_vars);
     free(self);
-}
-
-static bool simplex_table_is_var_in_basis(SimplexTable *self, size_t var_idx)
-{
-    for (size_t i = 0; i < self->rows - 1; ++i)
-        if (self->basic_vars_idxs[i] == var_idx)
-            return true;
-    return false;
 }
