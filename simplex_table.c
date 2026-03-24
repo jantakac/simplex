@@ -13,7 +13,7 @@ SimplexTable *simplex_table_create(void)
 {
     SimplexTable *self = malloc(sizeof(SimplexTable));
 
-    FILE *fhandler = fopen("priklad1.txt", "r");
+    FILE *fhandler = fopen("aaa.txt", "r");
     if (!fhandler)
         return nullptr;
 
@@ -83,7 +83,7 @@ void simplex_table_solve(SimplexTable *self)
             if (simplex_table_elem_val(self, i, pivot_col) <= 0.0f)
                 continue;
             float curr_div = simplex_table_elem_val(self, i, self->cols_st - 1) / simplex_table_elem_val(self, i, pivot_col);
-            if (curr_div > 0 && curr_div < smallest_ratio)
+            if (curr_div >= 0 && curr_div < smallest_ratio)
             {
                 smallest_ratio = curr_div;
                 pivot_row = i;
@@ -178,6 +178,7 @@ void simplex_table_print_solution(SimplexTable *self)
 
 void simplex_table_destroy(SimplexTable *self)
 {
+    free(self->costs);
     free(self->basic_vars);
     free(self->st_vars);
     free(self);
