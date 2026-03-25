@@ -7,7 +7,12 @@ typedef struct SimplexTable
     size_t *basic_vars;
     float *st_vars;
     float *costs;
+    bool minimizing;
 } SimplexTable;
+
+static inline size_t calc_pivot_column(SimplexTable *self, bool *out_found);
+static inline size_t calc_pivot_row(SimplexTable *self, size_t pivot_col, bool *out_found);
+static inline void apply_pivot_transform(SimplexTable *self, size_t pivot_row, size_t pivot_col);
 
 SimplexTable *simplex_table_create(void)
 {
@@ -19,7 +24,14 @@ SimplexTable *simplex_table_create(void)
 
     setlocale(LC_NUMERIC, "sk_SK.utf8");
 
-    fscanf(fhandler, "%zd %zd %*s ", &(self->rows_st), &(self->cols_st));
+    char optimization_direction[4];
+    fscanf(fhandler, "%zd %zd %3s ", &(self->rows_st), &(self->cols_st), optimization_direction);
+
+    // mi'n' vs ma'x'
+    if (optimization_direction[2] == 'n')
+        self->minimizing = true;
+    else
+        self->minimizing = false;
 
     for (size_t i = 0; i < self->rows_st; ++i)
         fscanf(fhandler, "%*c ");
@@ -29,6 +41,7 @@ SimplexTable *simplex_table_create(void)
     self->st_vars = malloc(sizeof(float) * self->rows_st * self->cols_st);
     self->basic_vars = malloc(sizeof(size_t) * self->rows_st);
 
+    // loading the objective function costs
     for (size_t i = 0; i < self->cols_st - 1; ++i)
         fscanf(fhandler, "%f", &(self->costs[i]));
 
@@ -51,70 +64,20 @@ void simplex_table_solve(SimplexTable *self)
 {
     while (true)
     {
-        size_t pivot_col;
-        float smallest_reduced_cost = FLT_MAX;
-        float reduced_cost;
-        bool found_piv = false;
-        // calculating the column of the pivot
-        for (size_t i = 0; i < self->cols_st - 1; ++i)
-        {
-            reduced_cost = 0.0f;
-            for (size_t j = 0; j < self->rows_st; ++j)
-                reduced_cost += self->costs[self->basic_vars[j]] * simplex_table_elem_val(self, j, i);
-            reduced_cost = self->costs[i] - reduced_cost;
-            if (reduced_cost < 0 && reduced_cost < smallest_reduced_cost)
-            {
-                smallest_reduced_cost = reduced_cost;
-                pivot_col = i;
-                found_piv = true;
-            }
-        }
+        simplex_table_print(self);
 
+        bool found_piv;
+        size_t pivot_col = calc_pivot_column(self, &found_piv);
         // if pivot_col was not found, end
         if (!found_piv)
             return;
 
-        size_t pivot_row;
-        float smallest_ratio = FLT_MAX;
-        found_piv = false;
-        // calculating the row of the pivot
-        for (size_t i = 0; i < self->rows_st; ++i)
-        {
-            if (simplex_table_elem_val(self, i, pivot_col) <= 0.0f)
-                continue;
-            float curr_div = simplex_table_elem_val(self, i, self->cols_st - 1) / simplex_table_elem_val(self, i, pivot_col);
-            if (curr_div >= 0 && curr_div < smallest_ratio)
-            {
-                smallest_ratio = curr_div;
-                pivot_row = i;
-                found_piv = true;
-            }
-        }
-
+        size_t pivot_row = calc_pivot_row(self, pivot_col, &found_piv);
         // if pivot_row was not found, end
         if (!found_piv)
             return;
 
-        simplex_table_print(self);
-        // change basic var
-        self->basic_vars[pivot_row] = pivot_col;
-
-        float pivot_val = simplex_table_elem_val(self, pivot_row, pivot_col);
-        for (size_t i = 0; i < self->cols_st; ++i)
-        {
-            *simplex_table_elem_ptr(self, pivot_row, i) /= pivot_val;
-        }
-
-        for (size_t i = 0; i < self->rows_st; ++i)
-        {
-            if (i == pivot_row)
-                continue;
-            float mul_by = -simplex_table_elem_val(self, i, pivot_col);
-            for (size_t j = 0; j < self->cols_st; ++j)
-            {
-                *simplex_table_elem_ptr(self, i, j) += simplex_table_elem_val(self, pivot_row, j) * mul_by;
-            }
-        }
+        apply_pivot_transform(self, pivot_row, pivot_col);
         simplex_table_print(self);
     }
 }
@@ -148,16 +111,12 @@ void simplex_table_print(SimplexTable *self)
     for (size_t i = 0; i < self->rows_st; ++i)
     {
         for (size_t j = 0; j < self->cols_st; ++j)
-        {
             printf("%7.2f ", simplex_table_elem_val(self, i, j));
-        }
         puts("");
     }
     puts("Basic variables:");
     for (size_t i = 0; i < self->rows_st; ++i)
-    {
-        printf("%zd ", self->basic_vars[i]);
-    }
+        printf("%zd ", self->basic_vars[i] + 1);
     puts("");
     puts("---------------------");
 }
@@ -182,4 +141,83 @@ void simplex_table_destroy(SimplexTable *self)
     free(self->basic_vars);
     free(self->st_vars);
     free(self);
+}
+
+static inline size_t calc_pivot_column(SimplexTable *self, bool *out_found)
+{
+    *out_found = false;
+    size_t pivot_col;
+    float best_reduced_cost;
+    float reduced_cost;
+
+    if (self->minimizing)
+        best_reduced_cost = FLT_MAX;
+    else
+        best_reduced_cost = -FLT_MAX;
+
+    for (size_t i = 0; i < self->cols_st - 1; ++i)
+    {
+        reduced_cost = 0.0f;
+        for (size_t j = 0; j < self->rows_st; ++j)
+            reduced_cost += self->costs[self->basic_vars[j]] * simplex_table_elem_val(self, j, i);
+        reduced_cost = self->costs[i] - reduced_cost;
+        bool is_better = false;
+        if (self->minimizing)
+        {
+            if (reduced_cost < 0 && reduced_cost < best_reduced_cost)
+                is_better = true;
+        }
+        else
+        {
+            if (reduced_cost > 0 && reduced_cost > best_reduced_cost)
+                is_better = true;
+        }
+        if (is_better)
+        {
+            best_reduced_cost = reduced_cost;
+            pivot_col = i;
+            *out_found = true;
+        }
+    }
+    return pivot_col;
+}
+
+static inline size_t calc_pivot_row(SimplexTable *self, size_t pivot_col, bool *out_found)
+{
+    size_t pivot_row;
+    float smallest_ratio = FLT_MAX;
+    *out_found = false;
+    // calculating the row of the pivot
+    for (size_t i = 0; i < self->rows_st; ++i)
+    {
+        if (simplex_table_elem_val(self, i, pivot_col) <= 0.0f)
+            continue;
+        float curr_div = simplex_table_elem_val(self, i, self->cols_st - 1) / simplex_table_elem_val(self, i, pivot_col);
+        if (curr_div >= 0 && curr_div < smallest_ratio)
+        {
+            smallest_ratio = curr_div;
+            pivot_row = i;
+            *out_found = true;
+        }
+    }
+    return pivot_row;
+}
+
+static inline void apply_pivot_transform(SimplexTable *self, size_t pivot_row, size_t pivot_col)
+{
+    // change basic var
+    self->basic_vars[pivot_row] = pivot_col;
+
+    float pivot_val = simplex_table_elem_val(self, pivot_row, pivot_col);
+    for (size_t i = 0; i < self->cols_st; ++i)
+        *simplex_table_elem_ptr(self, pivot_row, i) /= pivot_val;
+
+    for (size_t i = 0; i < self->rows_st; ++i)
+    {
+        if (i == pivot_row)
+            continue;
+        float mul_by = -simplex_table_elem_val(self, i, pivot_col);
+        for (size_t j = 0; j < self->cols_st; ++j)
+            *simplex_table_elem_ptr(self, i, j) += simplex_table_elem_val(self, pivot_row, j) * mul_by;
+    }
 }
