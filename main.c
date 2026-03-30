@@ -1,6 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
+
+#ifdef _WIN32
 #include <conio.h>
+#elif defined(__LINUX__)
+#include <curses.h>
+#endif
 
 #include "simplex_table.h"
 

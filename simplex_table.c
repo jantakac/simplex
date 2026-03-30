@@ -18,7 +18,7 @@ SimplexTable *simplex_table_create(void)
 {
     SimplexTable *self = malloc(sizeof(SimplexTable));
 
-    FILE *fhandler = fopen("aaa.txt", "r");
+    FILE *fhandler = fopen("priklad1.txt", "r");
     if (!fhandler)
         return nullptr;
 
@@ -74,6 +74,56 @@ void simplex_table_solve(SimplexTable *self)
 
         size_t pivot_row = calc_pivot_row(self, pivot_col, &found_piv);
         // if pivot_row was not found, end
+        if (!found_piv)
+            return;
+
+        apply_pivot_transform(self, pivot_row, pivot_col);
+        simplex_table_print(self);
+    }
+}
+
+void simplex_table_dual_solve(SimplexTable *self)
+{
+    while (true)
+    {
+        simplex_table_print(self);
+
+        bool found_piv = false;
+        float best_pivot_row_val = FLT_MAX;
+        size_t pivot_row;
+
+        for (size_t i = 0; i < self->rows_st; ++i)
+        {
+            float curr_val = simplex_table_elem_val(self, i, self->cols_st - 1);
+            if (curr_val < 0 && curr_val < best_pivot_row_val)
+            {
+                found_piv = true;
+                best_pivot_row_val = curr_val;
+                pivot_row = i;
+            }
+        }
+
+        if (!found_piv)
+            return;
+
+        found_piv = false;
+        float best_pivot_col_val = FLT_MAX;
+        size_t pivot_col;
+
+        for (size_t i = 0; i < self->cols_st; ++i)
+        {
+            if (simplex_table_elem_val(self, pivot_row, i) >= 0)
+                continue;
+
+            float curr_val = abs(self->costs[i] / simplex_table_elem_val(self, pivot_row, i));
+            if (curr_val < best_pivot_col_val)
+            {
+                found_piv = true;
+                best_pivot_col_val = curr_val;
+                pivot_col = i;
+            }
+        }
+
         if (!found_piv)
             return;
 
